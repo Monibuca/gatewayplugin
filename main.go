@@ -8,7 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"runtime"
+	"path/filepath"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -23,16 +23,15 @@ var (
 )
 
 func init() {
-	_, currentFilePath, _, _ := runtime.Caller(0)
-	dashboardPath = path.Join(path.Dir(currentFilePath), "./dashboard/dist")
-	InstallPlugin(&PluginConfig{
+	plugin := &PluginConfig{
 		Name:    "GateWay",
 		Type:    PLUGIN_HOOK,
 		Config:  config,
-		UI:      path.Join(path.Dir(currentFilePath), "./dashboard/ui/plugin-gateway.min.js"),
 		Version: "1.1.0",
 		Run:     run,
-	})
+	}
+	InstallPlugin(plugin)
+	dashboardPath = filepath.Join(plugin.Dir, "dashboard", "dist")
 }
 func run() {
 	http.HandleFunc("/api/sysInfo", sysInfo)
@@ -40,6 +39,7 @@ func run() {
 	http.HandleFunc("/api/summary", summary)
 	http.HandleFunc("/api/config", getConfig)
 	http.HandleFunc("/api/plugins", getPlugins)
+	http.HandleFunc("/api/readme", getReadMe)
 	http.HandleFunc("/", website)
 	log.Printf("server gateway start at %s", config.ListenAddr)
 	log.Fatal(http.ListenAndServe(config.ListenAddr, nil))
@@ -111,6 +111,7 @@ type PluginInfo struct {
 	Type    byte   //类型
 	Config  string //插件配置
 	UI      string //界面路径
+	ReadMe  string //README.md
 	Version string //插件版本
 }
 
@@ -119,12 +120,16 @@ func getPlugins(w http.ResponseWriter, r *http.Request) {
 	var plugins []*PluginInfo
 	for _, plugin := range Plugins {
 		p := &PluginInfo{
-			plugin.Name, plugin.Type, "", "", plugin.Version,
+			plugin.Name, plugin.Type, "", "", "", plugin.Version,
 		}
 		if plugin.UI != "" {
+
 			if bytes, err := ioutil.ReadFile(plugin.UI); err == nil {
 				p.UI = string(bytes)
 			}
+		}
+		if bytes, err := ioutil.ReadFile(filepath.Join(plugin.Dir, "README.md")); err == nil {
+			p.ReadMe = string(bytes)
 		}
 		var out bytes.Buffer
 		if toml.NewEncoder(&out).Encode(plugin.Config) == nil {
@@ -137,4 +142,15 @@ func getPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = w.Write(bytes)
+}
+func getReadMe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	plugin := Plugins[r.URL.Query().Get("name")]
+	if f, err := ioutil.ReadFile(filepath.Join(plugin.Dir, "README.md")); err == nil {
+		if _, err = w.Write(f); err != nil {
+			w.WriteHeader(505)
+		}
+	} else {
+		w.WriteHeader(404)
+	}
 }
